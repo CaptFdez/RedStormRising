@@ -4514,180 +4514,33 @@ function ctld.getLaserCode(_coalition)
     return _coalition == coalition.side.RED and ctld.JTAC_laserCode_RED or ctld.JTAC_laserCode_BLUE
 end
 
+local function doMooseDesignate(_jtacGroupName, _laserCode)
+    log:info("doMooseDesignate $1", _jtacGroupName)
+    HQ = GROUP:FindByName("HQ")
+    CC = COMMANDCENTER:New(HQ, "HQ")
+    RecceSetGroup = SET_GROUP:New():FilterPrefixes("CTLD_Hummer"):FilterStart()
+    RecceDetection = DETECTION_AREAS:New(RecceSetGroup, 10000)
+    AttackSet = SET_GROUP:New():FilterCoalitions("blue"):FilterStart()
+    RecceDesignation = DESIGNATE:New(CC, RecceDetection, AttackSet)
+    RecceDesignation:SetThreatLevelPrioritization(true)
+    RecceDesignation:GenerateLaserCodes()
+    RecceDesignation:AddMenuLaserCode(1113, "Lase with code %d")
+    RecceDesignation:AddMenuLaserCode(_laserCode, "Lase with code %d")
+    RecceDesignation:__Detect(-5)
+end
+
 function ctld.JTACAutoLase(_jtacGroupName, _laserCode, _smoke, _lock, _colour)
-
-    if ctld.jtacStop[_jtacGroupName] == true then
-        ctld.jtacStop[_jtacGroupName] = nil -- allow it to be started again
-        ctld.cleanupJTAC(_jtacGroupName)
-        return
-    end
-
-    if _lock == nil then
-
-        _lock = ctld.JTAC_lock
-    end
-
-    ctld.jtacLaserPointCodes[_jtacGroupName] = _laserCode
-
-    local _jtacGroup = ctld.getGroup(_jtacGroupName)
-    local _jtacUnit
-
-    if _jtacGroup == nil or #_jtacGroup == 0 then
-
-        --check not in a heli
-        for _, _onboard in pairs(ctld.inTransitTroops) do
-            if _onboard ~= nil then
-                if _onboard.troops ~= nil and _onboard.troops.groupName ~= nil and _onboard.troops.groupName == _jtacGroupName then
-
-                    --jtac soldier being transported by heli
-                    ctld.cleanupJTAC(_jtacGroupName)
-
-                    env.info(_jtacGroupName .. ' in Transport - Waiting 10 seconds')
-                    timer.scheduleFunction(ctld.timerJTACAutoLase, { _jtacGroupName, _laserCode, _smoke, _lock, _colour }, timer.getTime() + 10)
-                    return
-                end
-
-                if _onboard.vehicles ~= nil and _onboard.vehicles.groupName ~= nil and _onboard.vehicles.groupName == _jtacGroupName then
-                    --jtac vehicle being transported by heli
-                    ctld.cleanupJTAC(_jtacGroupName)
-
-                    env.info(_jtacGroupName .. ' in Transport - Waiting 10 seconds')
-                    timer.scheduleFunction(ctld.timerJTACAutoLase, { _jtacGroupName, _laserCode, _smoke, _lock, _colour }, timer.getTime() + 10)
-                    return
-                end
-            end
-        end
-
-        if ctld.jtacUnits[_jtacGroupName] ~= nil then
-            ctld.notifyCoalition("JTAC Group " .. _jtacGroupName .. " KIA!", 10, ctld.jtacUnits[_jtacGroupName].side)
-        end
-
-        --remove from list
-        ctld.jtacUnits[_jtacGroupName] = nil
-
-        ctld.cleanupJTAC(_jtacGroupName)
-
-        return
-    else
-
-        _jtacUnit = _jtacGroup[1]
-        --add to list
-        ctld.jtacUnits[_jtacGroupName] = { name = _jtacUnit:getName(), side = _jtacUnit:getCoalition() }
-
-        -- work out smoke colour
-        if _colour == nil then
-
-            if _jtacUnit:getCoalition() == 1 then
-                _colour = ctld.JTAC_smokeColour_RED
-            else
-                _colour = ctld.JTAC_smokeColour_BLUE
-            end
-        end
-
-        if _smoke == nil then
-
-            if _jtacUnit:getCoalition() == 1 then
-                _smoke = ctld.JTAC_smokeOn_RED
-            else
-                _smoke = ctld.JTAC_smokeOn_BLUE
-            end
-        end
-    end
-
-
-    -- search for current unit
-
-    if _jtacUnit:isActive() == false then
-
-        ctld.cleanupJTAC(_jtacGroupName)
-
-        env.info(_jtacGroupName .. ' Not Active - Waiting 30 seconds')
-        timer.scheduleFunction(ctld.timerJTACAutoLase, { _jtacGroupName, _laserCode, _smoke, _lock, _colour }, timer.getTime() + 30)
-
-        return
-    end
-
-    local _enemyUnit = ctld.getCurrentUnit(_jtacUnit, _jtacGroupName)
-
-    if _enemyUnit == nil and ctld.jtacCurrentTargets[_jtacGroupName] ~= nil then
-
-        local _tempUnitInfo = ctld.jtacCurrentTargets[_jtacGroupName]
-
-        --      env.info("TEMP UNIT INFO: " .. tempUnitInfo.name .. " " .. tempUnitInfo.unitType)
-
-        local _tempUnit = Unit.getByName(_tempUnitInfo.name)
-
-        if _tempUnit ~= nil and _tempUnit:getLife() > 0 and _tempUnit:isActive() == true then
-            ctld.notifyCoalition(_jtacGroupName .. " target " .. _tempUnitInfo.unitType .. " lost. Scanning for Targets. ", 10, _jtacUnit:getCoalition())
-        else
-            ctld.notifyCoalition(_jtacGroupName .. " target " .. _tempUnitInfo.unitType .. " KIA. Good Job! Scanning for Targets. ", 10, _jtacUnit:getCoalition())
-        end
-
-        --remove from smoke list
-        ctld.jtacSmokeMarks[_tempUnitInfo.name] = nil
-
-        -- remove from target list
-        ctld.jtacCurrentTargets[_jtacGroupName] = nil
-
-        --stop lasing
-        ctld.cancelLase(_jtacGroupName)
-    end
-
-    if _enemyUnit == nil then
-        _enemyUnit = ctld.findNearestVisibleEnemy(_jtacUnit, _lock)
-
-        if _enemyUnit ~= nil then
-
-            -- store current target for easy lookup
-            ctld.jtacCurrentTargets[_jtacGroupName] = { name = _enemyUnit:getName(), unitType = _enemyUnit:getTypeName(), unitId = _enemyUnit:getID() }
-
-            ctld.notifyCoalition(_jtacGroupName .. " lasing new target " .. _enemyUnit:getTypeName() .. '. CODE: ' .. _laserCode .. ctld.getPositionString(_enemyUnit), 10, _jtacUnit:getCoalition())
-
-            -- create smoke
-            if _smoke == true then
-
-                --create first smoke
-                ctld.createSmokeMarker(_enemyUnit, _colour)
-            end
-        end
-    end
-
-    if _enemyUnit ~= nil then
-
-        ctld.laseUnit(_enemyUnit, _jtacUnit, _jtacGroupName, _laserCode)
-
-        --   env.info('Timer timerSparkleLase '..jtacGroupName.." "..laserCode.." "..enemyUnit:getName())
-        timer.scheduleFunction(ctld.timerJTACAutoLase, { _jtacGroupName, _laserCode, _smoke, _lock, _colour }, timer.getTime() + 1)
-
-        if _smoke == true then
-            local _nextSmokeTime = ctld.jtacSmokeMarks[_enemyUnit:getName()]
-
-            --recreate smoke marker after 5 mins
-            if _nextSmokeTime ~= nil and _nextSmokeTime < timer.getTime() then
-
-                ctld.createSmokeMarker(_enemyUnit, _colour)
-            end
-        end
-
-    else
-        -- env.info('LASE: No Enemies Nearby')
-
-        -- stop lazing the old spot
-        ctld.cancelLase(_jtacGroupName)
-        --  env.info('Timer Slow timerSparkleLase '..jtacGroupName.." "..laserCode.." "..enemyUnit:getName())
-
-        timer.scheduleFunction(ctld.timerJTACAutoLase, { _jtacGroupName, _laserCode, _smoke, _lock, _colour }, timer.getTime() + 5)
-    end
+    doMooseDesignate(_jtacGroupName, _laserCode)
 end
 
 function ctld.JTACAutoLaseStop(_jtacGroupName)
-    ctld.jtacStop[_jtacGroupName] = true
+    --ctld.jtacStop[_jtacGroupName] = true
 end
 
 -- used by the timer function
 function ctld.timerJTACAutoLase(_args)
-
-    ctld.JTACAutoLase(_args[1], _args[2], _args[3], _args[4], _args[5])
+    --
+    --ctld.JTACAutoLase(_args[1], _args[2], _args[3], _args[4], _args[5])
 end
 
 function ctld.cleanupJTAC(_jtacGroupName)
